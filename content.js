@@ -8,15 +8,20 @@
     remove: /remove|delete|clear|cancel|×|✕|✖/i,
     danger: /place\s*order|submit\s*order|pay\s*now|complete\s*(purchase|order)|buy\s*now|confirm\s*order/i,
     itemRemove: /remove\s*(this\s*)?(item|product)|delete\s*(this\s*)?(item|product)|remove\s+from\s+cart|trash/i,
-    success: /applied|success|accepted|you\s+saved|discount.*applied|promo.*applied/i,
-    invalid: /invalid|not\s+valid|doesn['’]?t\s+exist|does\s+not\s+exist|unrecognized|incorrect|cannot\s+be\s+found|couldn['’]?t\s+find/i,
+    success: /applied|success|accepted|you\s+saved|discount.*applied|promo.*applied|code.*applied/i,
+    invalid: /invalid|not\s+valid|doesn['’]?t\s+exist|does\s+not\s+exist|unrecognized|incorrect|cannot\s+be\s+found|couldn['’]?t\s+find|not\s+found/i,
     expired: /expired|no\s+longer\s+valid|has\s+ended/i,
-    minimum: /minimum|min\.\s*(order|spend)|spend.*(more|at\s+least)|requires?.*(minimum|order)/i,
-    eligible: /not\s+eligible|doesn['’]?t\s+apply|does\s+not\s+apply|not\s+applicable|excluded|eligible\s+items|specific\s+(item|product)/i,
+    minimum: /minimum|min\.\s*(order|spend)|spend.*(more|at\s+least)|requires?.*(minimum|order)|minimum\s+spend/i,
+    eligible: /not\s+eligible|doesn['’]?t\s+apply|does\s+not\s+apply|not\s+applicable|excluded|eligible\s+items|specific\s+(item|product)|cannot\s+be\s+applied\s+to/i,
     used: /already\s+used|usage\s+limit|one\s+use/i,
     login: /sign\s*in|log\s*in|login|required\s+account|members?\s+only/i,
     stack: /cannot\s+combine|can['’]?t\s+combine|not\s+combinable|not\s+stackable|one\s+(promo|coupon|discount)/i
   };
+
+  const STATUS_SIGNAL = new RegExp([
+    RE.success.source, RE.invalid.source, RE.expired.source, RE.minimum.source,
+    RE.eligible.source, RE.used.source, RE.login.source, RE.stack.source
+  ].join('|'), 'i');
 
   let running = false;
   let abortRequested = false;
@@ -29,22 +34,28 @@
     return s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0 && r.width > 1 && r.height > 1;
   }
 
+  function cleanText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
   function textOf(el) {
-    return [el?.getAttribute?.('aria-label'), el?.getAttribute?.('placeholder'), el?.getAttribute?.('name'), el?.getAttribute?.('id'), el?.getAttribute?.('title'), el?.textContent]
-      .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    return cleanText([
+      el?.getAttribute?.('aria-label'), el?.getAttribute?.('placeholder'), el?.getAttribute?.('name'),
+      el?.getAttribute?.('id'), el?.getAttribute?.('title'), el?.textContent
+    ].filter(Boolean).join(' '));
   }
 
   function contextOf(el) {
     let out = textOf(el);
     let p = el?.parentElement;
     for (let i = 0; i < 3 && p; i += 1, p = p.parentElement) {
-      const t = (p.innerText || '').replace(/\s+/g, ' ').trim();
+      const t = cleanText(p.innerText || '');
       if (t && t.length < 550) out += ` ${t}`;
     }
     if (el?.id) {
       try {
         const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-        if (label) out += ` ${label.textContent || ''}`;
+        if (label) out += ` ${cleanText(label.textContent)}`;
       } catch {}
     }
     return out;
@@ -74,17 +85,10 @@
   }
 
   function cartItemCount() {
-    const selectors = [
-      'tr.cart_item',
-      '.woocommerce-cart-form__cart-item.cart_item',
-      '.wc-block-cart-items__row',
-      '[data-cart-item-key]'
-    ];
+    const selectors = ['tr.cart_item','.woocommerce-cart-form__cart-item.cart_item','.wc-block-cart-items__row','[data-cart-item-key]'];
     const items = new Set();
     for (const selector of selectors) {
-      for (const el of document.querySelectorAll(selector)) {
-        if (visible(el)) items.add(el);
-      }
+      for (const el of document.querySelectorAll(selector)) if (visible(el)) items.add(el);
     }
     return items.size;
   }
@@ -187,12 +191,11 @@
 
   function fallbackByLabel(kind) {
     const rules = kind === 'subtotal' ? [/\bsub\s*total\b/i, /\bitems?\s+total\b/i]
-      : kind === 'discount' ? [/\bdiscount\b/i, /\bcoupon\b/i, /\bpromo(?:tion)?\b/i, /\bsavings?\b/i]
       : [/\bgrand\s+total\b/i, /\border\s+total\b/i, /^\s*total\b/i];
     const hits = [];
     for (const el of document.querySelectorAll('div,span,p,li,dt,dd,tr,td,th,strong,b')) {
       if (!visible(el)) continue;
-      const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+      const text = cleanText(el.innerText || el.textContent || '');
       if (!text || text.length > 180 || (kind === 'total' && /sub\s*total/i.test(text)) || !rules.some((r) => r.test(text))) continue;
       const amount = moneyFromText(text);
       if (amount !== null) hits.push({ amount, currency: currencyFromText(text), score: (text.length < 80 ? 2 : 0) + (rules[0].test(text) ? 2 : 0) });
@@ -204,26 +207,51 @@
   function snapshotTotals() {
     const subtotal = firstAmount(['.cart-subtotal .woocommerce-Price-amount','.cart-subtotal .amount','td[data-title="Subtotal"] .woocommerce-Price-amount','.order-subtotal .woocommerce-Price-amount']) || fallbackByLabel('subtotal');
     const total = firstAmount(['.order-total .woocommerce-Price-amount','.order-total .amount','td[data-title="Total"] .woocommerce-Price-amount','.cart_totals .order-total .woocommerce-Price-amount']) || fallbackByLabel('total');
-    const discount = sumAmounts(['tr.cart-discount .woocommerce-Price-amount','tr[class*="cart-discount"] .amount','.cart-discount .woocommerce-Price-amount','td[data-title*="Discount"] .woocommerce-Price-amount']) || fallbackByLabel('discount');
+    const discount = sumAmounts(['tr.cart-discount .woocommerce-Price-amount','tr[class*="cart-discount"] .amount','.cart-discount .woocommerce-Price-amount','td[data-title*="Discount"] .woocommerce-Price-amount']);
     return { subtotal: subtotal?.amount ?? null, total: total?.amount ?? null, discount: discount?.amount ?? null, currencySymbol: subtotal?.currency || total?.currency || discount?.currency || '' };
   }
 
-  function collectMessages(code = '') {
+  function addMessage(out, value, maxLength = 600) {
+    const t = cleanText(value);
+    if (t && t.length <= maxLength) out.add(t);
+  }
+
+  function collectMessages(code = '', input = null) {
     const out = new Set();
-    const selectors = '[role="alert"],[aria-live],.woocommerce-message,.woocommerce-error,.woocommerce-info,.error,.errors,.success,.notice,.message,[class*="error"],[class*="success"],[class*="notice"],[class*="coupon"],[class*="promo"],[class*="discount"]';
+    const target = code.toLowerCase();
+    const selectors = '[role="alert"],[aria-live],.woocommerce-message,.woocommerce-error,.woocommerce-info,.error,.errors,.success,.notice,.message,.alert,.form-error,.field-error,.invalid-feedback,[class*="error"],[class*="success"],[class*="notice"],[class*="message"],[class*="coupon"],[class*="promo"],[class*="discount"]';
     for (const el of document.querySelectorAll(selectors)) {
       if (!visible(el)) continue;
-      const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (t && t.length <= 600) out.add(t);
+      addMessage(out, el.innerText || el.textContent || '');
     }
-    if (code) {
-      for (const el of document.querySelectorAll('tr,div,span,p,li')) {
+
+    const roots = new Set();
+    if (input) {
+      roots.add(input.parentElement);
+      roots.add(input.closest?.('form'));
+      let p = input.parentElement;
+      for (let i = 0; i < 3 && p; i += 1, p = p.parentElement) roots.add(p);
+    }
+    for (const root of roots) {
+      if (!root) continue;
+      for (const el of root.querySelectorAll('div,span,p,li,small,label,em,strong')) {
         if (!visible(el)) continue;
-        const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-        if (t && t.length <= 250 && t.toLowerCase().includes(code.toLowerCase())) out.add(t);
+        const t = cleanText(el.innerText || el.textContent || '');
+        if (!t || t.length > 350) continue;
+        if (STATUS_SIGNAL.test(t) || (target && t.toLowerCase().includes(target))) addMessage(out, t, 350);
       }
     }
-    return [...out].slice(0, 35).join(' | ');
+
+    if (code) {
+      for (const el of document.querySelectorAll('div,span,p,li,small,label,em,strong')) {
+        if (!visible(el)) continue;
+        const t = cleanText(el.innerText || el.textContent || '');
+        if (!t || t.length > 300) continue;
+        const lower = t.toLowerCase();
+        if (lower.includes(target) || STATUS_SIGNAL.test(t)) addMessage(out, t, 300);
+      }
+    }
+    return [...out].slice(0, 40).join(' | ');
   }
 
   function appliedCouponElements(code = '') {
@@ -233,7 +261,7 @@
     for (const el of document.querySelectorAll(selectors)) {
       if (isCartItemRemoveControl(el)) continue;
       const data = (el.getAttribute?.('data-coupon') || '').toLowerCase();
-      const text = (el.innerText || el.textContent || '').toLowerCase();
+      const text = cleanText(el.innerText || el.textContent || '').toLowerCase();
       const cls = String(el.className || '').toLowerCase();
       const couponish = /cart-discount|applied-coupon|coupon-code|coupon/.test(cls) || Boolean(data);
       if (!couponish) continue;
@@ -248,18 +276,11 @@
 
   function directCouponRemoveControls() {
     const selectors = [
-      'a.woocommerce-remove-coupon',
-      'button.woocommerce-remove-coupon',
-      '[class*="woocommerce-remove-coupon"]',
-      '[class*="remove-coupon"]',
-      '[class*="remove_coupon"]',
-      'a[href*="remove_coupon"]',
-      'button[data-coupon][class*="remove"]',
-      'a[data-coupon][class*="remove"]',
-      'a[data-coupon][href*="remove"]'
+      'a.woocommerce-remove-coupon','button.woocommerce-remove-coupon','[class*="woocommerce-remove-coupon"]',
+      '[class*="remove-coupon"]','[class*="remove_coupon"]','a[href*="remove_coupon"]',
+      'button[data-coupon][class*="remove"]','a[data-coupon][class*="remove"]','a[data-coupon][href*="remove"]'
     ];
-    return [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))]
-      .filter((el) => !isCartItemRemoveControl(el));
+    return [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))].filter((el) => !isCartItemRemoveControl(el));
   }
 
   function findRemoveButton(code = '') {
@@ -267,7 +288,7 @@
     const direct = directCouponRemoveControls().map((el) => {
       const data = (el.getAttribute?.('data-coupon') || '').toLowerCase();
       const href = decodeURIComponent(el.getAttribute?.('href') || '').toLowerCase();
-      const rowText = (el.closest?.('tr.cart-discount,[class*="cart-discount"],[class*="applied-coupon"],[class*="coupon-code"]')?.innerText || '').toLowerCase();
+      const rowText = cleanText(el.closest?.('tr.cart-discount,[class*="cart-discount"],[class*="applied-coupon"],[class*="coupon-code"]')?.innerText || '').toLowerCase();
       let score = 30;
       if (target && data === target) score += 50;
       if (target && href.includes(target)) score += 40;
@@ -287,14 +308,50 @@
         }
       }
     }
-
     const candidates = [...direct, ...inCouponRows].sort((a, b) => b.score - a.score);
     return candidates[0]?.el || null;
   }
 
-  async function waitForUpdate(ms = 1800) {
+  async function waitForUpdate(ms = 1200) {
     await sleep(ms);
-    await sleep(250);
+    await sleep(200);
+  }
+
+  function totalsChanged(before, after) {
+    const keys = ['subtotal','total','discount'];
+    return keys.some((key) => Number.isFinite(before[key]) && Number.isFinite(after[key]) && Math.abs(before[key] - after[key]) > 0.005);
+  }
+
+  function hasMeaningfulResponse(message, code, beforeMessage = '') {
+    const t = cleanText(message);
+    if (!t) return false;
+    if (t === cleanText(beforeMessage)) return false;
+    const lower = t.toLowerCase();
+    return STATUS_SIGNAL.test(t) || (code && lower.includes(code.toLowerCase()));
+  }
+
+  async function waitForCouponResponse({ code, baseline, beforeMessage, input, timeoutMs = 8000 }) {
+    const started = Date.now();
+    let latestMessage = collectMessages(code, input);
+    let latestTotals = snapshotTotals();
+    let lastSignature = '';
+    let stableHits = 0;
+
+    while (Date.now() - started < timeoutMs) {
+      await sleep(250);
+      latestMessage = collectMessages(code, input);
+      latestTotals = snapshotTotals();
+      const applied = couponStillApplied(code);
+      const changed = hasMeaningfulResponse(latestMessage, code, beforeMessage) || totalsChanged(baseline, latestTotals) || applied;
+
+      if (changed) {
+        const signature = `${cleanText(latestMessage)}|${latestTotals.total}|${latestTotals.discount}|${applied}`;
+        if (signature === lastSignature) stableHits += 1;
+        else { stableHits = 0; lastSignature = signature; }
+        if (stableHits >= 1) return { message: latestMessage, totals: latestTotals, timedOut: false };
+      }
+    }
+    return { message: latestMessage, totals: latestTotals, timedOut: true };
   }
 
   async function removeCoupon(code, baseline) {
@@ -306,9 +363,7 @@
       safeClick(remove, 'coupon-remove');
       await waitForUpdate(1200 + attempt * 500);
       const afterItems = cartItemCount();
-      if (beforeItems > 0 && afterItems < beforeItems) {
-        throw new Error('Safety stop: cart item count decreased while removing a coupon. Testing stopped.');
-      }
+      if (beforeItems > 0 && afterItems < beforeItems) throw new Error('Safety stop: cart item count decreased while removing a coupon. Testing stopped.');
       for (let i = 0; i < 5; i += 1) {
         if (!couponStillApplied(code)) return true;
         const now = snapshotTotals();
@@ -324,7 +379,6 @@
       const rows = appliedCouponElements('');
       const safeControls = directCouponRemoveControls();
       if (!rows.length && !safeControls.length) return true;
-
       let remove = null;
       for (const row of rows) {
         const local = [...row.querySelectorAll('a,button,[role="button"]')]
@@ -333,14 +387,11 @@
       }
       if (!remove) remove = safeControls[0] || null;
       if (!remove) return false;
-
       const beforeItems = cartItemCount();
       safeClick(remove, 'coupon-remove');
       await waitForUpdate(1200);
       const afterItems = cartItemCount();
-      if (beforeItems > 0 && afterItems < beforeItems) {
-        throw new Error('Safety stop: a cart item was removed instead of a coupon.');
-      }
+      if (beforeItems > 0 && afterItems < beforeItems) throw new Error('Safety stop: a cart item was removed instead of a coupon.');
     }
     return appliedCouponElements('').length === 0 && directCouponRemoveControls().length === 0;
   }
@@ -381,19 +432,31 @@
     if (!input) throw new Error('Coupon/discount field not found on this page. Phase 1 expects the field to be visible.');
     const apply = findApplyButton(input);
     if (!apply) throw new Error('Apply coupon button not found near the coupon field.');
-    const beforeMessage = collectMessages();
-    setValue(input, ''); await sleep(80); setValue(input, code);
+
+    const beforeMessage = collectMessages('', input);
+    setValue(input, '');
+    await sleep(80);
+    setValue(input, code);
     safeClick(apply);
-    await waitForUpdate(1400);
-    const after = snapshotTotals();
-    const message = collectMessages(code);
-    const status = classify(message, baseline, after, code, message !== beforeMessage);
-    const discount = computeDiscount(baseline, after, message);
+
+    const response = await waitForCouponResponse({ code, baseline, beforeMessage, input, timeoutMs: 8000 });
+    const after = response.totals;
+    const message = response.message || collectMessages(code, input);
+    const messageChanged = cleanText(message) !== cleanText(beforeMessage);
+    const status = classify(message, baseline, after, code, messageChanged);
+    const discount = status === 'WORKING' || status === 'WORKING_UNMEASURED'
+      ? computeDiscount(baseline, after, message)
+      : { amount: null, percent: null };
+
+    const finalMessage = message || (response.timedOut
+      ? 'No clear coupon response appeared within 8 seconds.'
+      : 'No clear success/error message was detected.');
+
     return {
       code, status, discountPercent: discount.percent, discountAmount: discount.amount,
       currencySymbol: after.currencySymbol || baseline.currencySymbol || '', baselineSubtotal: baseline.subtotal,
-      baselineTotal: baseline.total, afterTotal: after.total, message: message || 'No clear success/error message was detected.',
-      testedAt: new Date().toISOString()
+      baselineTotal: baseline.total, afterTotal: after.total, message: finalMessage,
+      responseTimedOut: response.timedOut, testedAt: new Date().toISOString()
     };
   }
 
@@ -443,8 +506,8 @@
             break;
           }
         } else {
-          const input = findCouponInput();
-          if (input) setValue(input, '');
+          const currentInput = findCouponInput();
+          if (currentInput) setValue(currentInput, '');
         }
       }
 
