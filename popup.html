@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CouponTest</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div>
+        <p class="eyebrow">PHASE 1</p>
+        <h1>CouponTest</h1>
+        <p id="host" class="host">Current page</p>
+      </div>
+      <span id="runBadge" class="badge">Ready</span>
+    </header>
+
+    <section class="panel">
+      <label for="codes">Coupon codes</label>
+      <textarea id="codes" rows="7" placeholder="SAVE10\nWELCOME20\nSUMMER15"></textarea>
+      <p class="hint">Paste one per line, or separate with commas/spaces.</p>
+
+      <label class="check-row">
+        <input id="reapplyBest" type="checkbox" checked />
+        <span>Re-apply best working code after testing</span>
+      </label>
+
+      <div class="actions">
+        <button id="start" class="primary">Start testing</button>
+        <button id="stop" class="secondary" disabled>Stop</button>
+      </div>
+    </section>
+
+    <section class="summary-grid">
+      <div><span>Tested</span><strong id="testedCount">0</strong></div>
+      <div><span>Working</span><strong id="workingCount">0</strong></div>
+      <div><span>Best</span><strong id="bestValue">—</strong></div>
+    </section>
+
+    <p id="status" class="status">Open a cart or checkout page where the coupon field is visible.</p>
+
+    <section class="results-wrap">
+      <table>
+        <thead><tr><th>Code</th><th>Status</th><th>Discount</th></tr></thead>
+        <tbody id="results"></tbody>
+      </table>
+    </section>
+
+    <footer class="footer">
+      <button id="exportCsv" class="link-btn" disabled>Export CSV</button>
+      <button id="clearResults" class="link-btn">Clear</button>
+    </footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
