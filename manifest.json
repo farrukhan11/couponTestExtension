@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "CouponTest",
-  "version": "0.1.0",
-  "description": "Test pasted coupon codes on the current cart or checkout page and identify the best working discount.",
+  "version": "0.2.0",
+  "description": "Test pasted coupon codes sequentially on the current cart or checkout page and identify the best working discount.",
   "permissions": ["activeTab", "storage"],
   "host_permissions": ["<all_urls>"],
   "action": {
@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
+      "js": ["content-v2.js"],
       "run_at": "document_idle"
     }
   ]
