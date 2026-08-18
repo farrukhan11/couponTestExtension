@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "CouponTest",
-  "version": "0.3.0",
-  "description": "Test pasted coupon codes one by one with fixed response timeout and identify the best working discount.",
+  "version": "0.4.0",
+  "description": "Test pasted coupon codes with robust input events, apply-button clicking, and response capture.",
   "permissions": ["activeTab", "storage"],
   "host_permissions": ["<all_urls>"],
   "action": {
@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["content-v3.js"],
+      "js": ["content-v4.js"],
       "run_at": "document_idle"
     }
   ]
