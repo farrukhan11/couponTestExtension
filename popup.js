@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const els = {
   host: $('host'), runBadge: $('runBadge'), codes: $('codes'), reapplyBest: $('reapplyBest'),
-  start: $('start'), stop: $('stop'), testedCount: $('testedCount'), workingCount: $('workingCount'),
+  start: $('start'), stop: $('stop'), resetCoupon: $('resetCoupon'), testedCount: $('testedCount'), workingCount: $('workingCount'),
   bestValue: $('bestValue'), status: $('status'), results: $('results'), exportCsv: $('exportCsv'), clearResults: $('clearResults')
 };
 let currentRun = null;
@@ -16,7 +16,7 @@ function discountLabel(r) {
   return '—';
 }
 function setRunning(on) {
-  els.start.disabled = on; els.stop.disabled = !on; els.codes.disabled = on; els.reapplyBest.disabled = on;
+  els.start.disabled = on; els.stop.disabled = !on; els.codes.disabled = on; els.reapplyBest.disabled = on; els.resetCoupon.disabled = on;
   els.runBadge.textContent = on ? 'Running' : 'Ready';
   els.runBadge.className = on ? 'badge running' : 'badge';
 }
@@ -72,6 +72,24 @@ els.start.addEventListener('click', async () => {
   finally { setRunning(false); }
 });
 els.stop.addEventListener('click', async () => { const tab=await activeTab(); if(tab?.id) chrome.tabs.sendMessage(tab.id,{type:'STOP_COUPON_TESTS'}).catch(()=>{}); els.status.textContent='Stopping after current action…'; });
+els.resetCoupon.addEventListener('click', async () => {
+  const tab = await activeTab();
+  if (!tab?.id || !/^https?:/i.test(tab.url || '')) return void (els.status.textContent='Open the store cart/checkout page first.');
+  els.resetCoupon.disabled = true;
+  els.status.textContent = 'Trying to reset applied coupon…';
+  try {
+    const res = await chrome.tabs.sendMessage(tab.id, { type: 'RESET_APPLIED_COUPONS' });
+    els.status.textContent = res?.message || (res?.ok ? 'Applied coupon reset.' : 'Could not reset applied coupon.');
+    els.runBadge.textContent = res?.ok ? 'Reset' : 'Manual';
+    els.runBadge.className = res?.ok ? 'badge done' : 'badge error';
+  } catch (e) {
+    els.status.textContent = 'Reset helper not loaded yet. Reload extension and refresh the page.';
+    els.runBadge.textContent = 'Error';
+    els.runBadge.className = 'badge error';
+  } finally {
+    els.resetCoupon.disabled = false;
+  }
+});
 els.clearResults.addEventListener('click', async () => { const tab=await activeTab(); if(tab?.id) await chrome.storage.local.remove(`couponTest:${tab.id}`); render(null); els.status.textContent='Results cleared.'; });
 els.exportCsv.addEventListener('click', () => {
   const results=currentRun?.results || []; if(!results.length) return;
