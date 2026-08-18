@@ -7,6 +7,7 @@
     apply: /apply|redeem|submit|add|use/i,
     remove: /remove|delete|clear|cancel|×|✕|✖/i,
     danger: /place\s*order|submit\s*order|pay\s*now|complete\s*(purchase|order)|buy\s*now|confirm\s*order/i,
+    itemRemove: /remove\s*(this\s*)?(item|product)|delete\s*(this\s*)?(item|product)|remove\s+from\s+cart|trash/i,
     success: /applied|success|accepted|you\s+saved|discount.*applied|promo.*applied/i,
     invalid: /invalid|not\s+valid|doesn['’]?t\s+exist|does\s+not\s+exist|unrecognized|incorrect|cannot\s+be\s+found|couldn['’]?t\s+find/i,
     expired: /expired|no\s+longer\s+valid|has\s+ended/i,
@@ -49,6 +50,45 @@
     return out;
   }
 
+  function isCouponRemoveControl(el) {
+    if (!el) return false;
+    const cls = String(el.className || '');
+    const href = el.getAttribute?.('href') || '';
+    const dataCoupon = el.getAttribute?.('data-coupon');
+    return /woocommerce-remove-coupon|remove[-_]coupon/i.test(cls)
+      || /remove_coupon/i.test(href)
+      || Boolean(dataCoupon && (/remove/i.test(cls) || /remove/i.test(href)));
+  }
+
+  function isCartItemRemoveControl(el) {
+    if (!el || isCouponRemoveControl(el)) return false;
+    const own = textOf(el);
+    const cls = String(el.className || '');
+    const href = el.getAttribute?.('href') || '';
+    if (RE.itemRemove.test(own)) return true;
+    if (/remove_from_cart|remove-item|remove_item|cart_item_key/i.test(`${cls} ${href}`)) return true;
+    if (el.closest?.('.product-remove,.cart_item,.woocommerce-cart-form__cart-item,.wc-block-cart-items__row,[data-cart-item-key],[class*="cart-item"],[class*="line-item"]')) {
+      if (/\bremove\b|delete|trash|×|✕|✖/i.test(`${own} ${cls}`)) return true;
+    }
+    return false;
+  }
+
+  function cartItemCount() {
+    const selectors = [
+      'tr.cart_item',
+      '.woocommerce-cart-form__cart-item.cart_item',
+      '.wc-block-cart-items__row',
+      '[data-cart-item-key]'
+    ];
+    const items = new Set();
+    for (const selector of selectors) {
+      for (const el of document.querySelectorAll(selector)) {
+        if (visible(el)) items.add(el);
+      }
+    }
+    return items.size;
+  }
+
   function findCouponInput() {
     const items = [...document.querySelectorAll('input:not([type="hidden"]), textarea')].filter(visible).map((el) => {
       const own = textOf(el), ctx = contextOf(el);
@@ -65,7 +105,7 @@
   function findApplyButton(input) {
     const items = [...document.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],a')].filter(visible).map((el) => {
       const t = textOf(el);
-      if (RE.danger.test(t)) return { el, score: -100 };
+      if (RE.danger.test(t) || isCartItemRemoveControl(el)) return { el, score: -100 };
       let score = RE.apply.test(t) ? 7 : 0;
       if (RE.coupon.test(t)) score += 5;
       if (input?.form && el.closest('form') === input.form) score += 8;
@@ -84,10 +124,14 @@
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  function safeClick(el) {
+  function safeClick(el, purpose = 'normal') {
     if (!el) throw new Error('Required button was not found.');
     const t = textOf(el);
     if (RE.danger.test(t)) throw new Error(`Blocked unsafe checkout action: ${t}`);
+    if (isCartItemRemoveControl(el)) throw new Error(`Blocked cart item removal control: ${t || String(el.className || '')}`);
+    if (purpose === 'coupon-remove' && !isCouponRemoveControl(el) && !el.closest?.('tr.cart-discount,[class*="cart-discount"],[class*="applied-coupon"],[class*="coupon-code"]')) {
+      throw new Error('Blocked non-coupon remove control.');
+    }
     try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
     el.click();
   }
@@ -185,41 +229,67 @@
   function appliedCouponElements(code = '') {
     const target = code.toLowerCase();
     const matches = [];
-    for (const el of document.querySelectorAll('[data-coupon],tr.cart-discount,[class*="cart-discount"],[class*="applied-coupon"],[class*="coupon-code"]')) {
+    const selectors = 'tr.cart-discount,tr[class*="cart-discount"],[class*="applied-coupon"],[class*="coupon-code"],[data-coupon]';
+    for (const el of document.querySelectorAll(selectors)) {
+      if (isCartItemRemoveControl(el)) continue;
       const data = (el.getAttribute?.('data-coupon') || '').toLowerCase();
       const text = (el.innerText || el.textContent || '').toLowerCase();
-      if (!code || data === target || text.includes(target)) matches.push(el);
+      const cls = String(el.className || '').toLowerCase();
+      const couponish = /cart-discount|applied-coupon|coupon-code|coupon/.test(cls) || Boolean(data);
+      if (!couponish) continue;
+      if (!code || data === target || text.includes(target) || cls.includes(target.replace(/[^a-z0-9_-]/g, ''))) matches.push(el);
     }
-    return matches;
+    return [...new Set(matches)];
   }
 
   function couponStillApplied(code) {
     return appliedCouponElements(code).length > 0;
   }
 
+  function directCouponRemoveControls() {
+    const selectors = [
+      'a.woocommerce-remove-coupon',
+      'button.woocommerce-remove-coupon',
+      '[class*="woocommerce-remove-coupon"]',
+      '[class*="remove-coupon"]',
+      '[class*="remove_coupon"]',
+      'a[href*="remove_coupon"]',
+      'button[data-coupon][class*="remove"]',
+      'a[data-coupon][class*="remove"]',
+      'a[data-coupon][href*="remove"]'
+    ];
+    return [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))]
+      .filter((el) => !isCartItemRemoveControl(el));
+  }
+
   function findRemoveButton(code = '') {
     const target = code.toLowerCase();
-    const direct = [...document.querySelectorAll('a.woocommerce-remove-coupon,button.woocommerce-remove-coupon,[class*="woocommerce-remove-coupon"],[class*="remove-coupon"],[class*="remove_coupon"],[href*="remove_coupon"],[data-coupon]')];
-    const generic = [...document.querySelectorAll('button,a,[role="button"]')].filter((el) => !direct.includes(el));
-    const scored = [...direct, ...generic].map((el) => {
-      const own = textOf(el), cls = String(el.className || ''), href = el.getAttribute?.('href') || '', data = (el.getAttribute?.('data-coupon') || '').toLowerCase();
-      if (RE.danger.test(own)) return { el, score: -100 };
-      let score = 0;
-      if (data && (!target || data === target)) score += 40;
-      if (/woocommerce-remove-coupon|remove[-_]coupon/i.test(cls)) score += 25;
-      if (/remove_coupon/i.test(href)) score += 20;
-      if (target && decodeURIComponent(href).toLowerCase().includes(target)) score += 20;
-      if (RE.remove.test(own)) score += 10;
-      let p = el.parentElement;
-      for (let i = 0; i < 4 && p; i += 1, p = p.parentElement) {
-        const ctx = (p.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        if (target && ctx.includes(target)) score += 16;
-        if (RE.coupon.test(ctx) && ctx.length < 400) score += 4;
-      }
-      if (!visible(el) && score < 35) score -= 15;
+    const direct = directCouponRemoveControls().map((el) => {
+      const data = (el.getAttribute?.('data-coupon') || '').toLowerCase();
+      const href = decodeURIComponent(el.getAttribute?.('href') || '').toLowerCase();
+      const rowText = (el.closest?.('tr.cart-discount,[class*="cart-discount"],[class*="applied-coupon"],[class*="coupon-code"]')?.innerText || '').toLowerCase();
+      let score = 30;
+      if (target && data === target) score += 50;
+      if (target && href.includes(target)) score += 40;
+      if (target && rowText.includes(target)) score += 30;
+      if (!target && data) score += 20;
       return { el, score };
-    }).sort((a, b) => b.score - a.score);
-    return scored[0]?.score >= 15 ? scored[0].el : null;
+    });
+
+    const inCouponRows = [];
+    if (code) {
+      for (const row of appliedCouponElements(code)) {
+        for (const el of row.querySelectorAll('button,a,[role="button"]')) {
+          if (!visible(el) || isCartItemRemoveControl(el)) continue;
+          const own = textOf(el);
+          if (!RE.remove.test(own)) continue;
+          inCouponRows.push({ el, score: 25 + (isCouponRemoveControl(el) ? 30 : 0) });
+        }
+      }
+    }
+
+    const candidates = [...direct, ...inCouponRows].sort((a, b) => b.score - a.score);
+    return candidates[0]?.el || null;
   }
 
   async function waitForUpdate(ms = 1800) {
@@ -229,33 +299,50 @@
 
   async function removeCoupon(code, baseline) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!couponStillApplied(code)) return true;
       const remove = findRemoveButton(code);
-      if (remove) {
-        safeClick(remove);
-        await waitForUpdate(1200 + attempt * 500);
-        for (let i = 0; i < 5; i += 1) {
-          if (!couponStillApplied(code)) return true;
-          const now = snapshotTotals();
-          if (Number.isFinite(baseline.total) && Number.isFinite(now.total) && Math.abs(now.total - baseline.total) < 0.02) return true;
-          await sleep(400);
-        }
+      if (!remove) return false;
+      const beforeItems = cartItemCount();
+      safeClick(remove, 'coupon-remove');
+      await waitForUpdate(1200 + attempt * 500);
+      const afterItems = cartItemCount();
+      if (beforeItems > 0 && afterItems < beforeItems) {
+        throw new Error('Safety stop: cart item count decreased while removing a coupon. Testing stopped.');
       }
-      const input = findCouponInput();
-      if (input && String(input.value || '').toLowerCase() === code.toLowerCase()) setValue(input, '');
+      for (let i = 0; i < 5; i += 1) {
+        if (!couponStillApplied(code)) return true;
+        const now = snapshotTotals();
+        if (Number.isFinite(baseline.total) && Number.isFinite(now.total) && Math.abs(now.total - baseline.total) < 0.02) return true;
+        await sleep(400);
+      }
     }
     return !couponStillApplied(code);
   }
 
   async function clearExistingCoupons() {
     for (let guard = 0; guard < 6; guard += 1) {
-      const dataEl = [...document.querySelectorAll('[data-coupon]')].find((el) => /remove|coupon/i.test(`${el.className || ''} ${el.getAttribute?.('href') || ''}`));
-      const code = dataEl?.getAttribute?.('data-coupon') || '';
-      const remove = findRemoveButton(code);
-      if (!remove) return true;
-      safeClick(remove);
+      const rows = appliedCouponElements('');
+      const safeControls = directCouponRemoveControls();
+      if (!rows.length && !safeControls.length) return true;
+
+      let remove = null;
+      for (const row of rows) {
+        const local = [...row.querySelectorAll('a,button,[role="button"]')]
+          .find((el) => !isCartItemRemoveControl(el) && (isCouponRemoveControl(el) || RE.remove.test(textOf(el))));
+        if (local) { remove = local; break; }
+      }
+      if (!remove) remove = safeControls[0] || null;
+      if (!remove) return false;
+
+      const beforeItems = cartItemCount();
+      safeClick(remove, 'coupon-remove');
       await waitForUpdate(1200);
+      const afterItems = cartItemCount();
+      if (beforeItems > 0 && afterItems < beforeItems) {
+        throw new Error('Safety stop: a cart item was removed instead of a coupon.');
+      }
     }
-    return !findRemoveButton('');
+    return appliedCouponElements('').length === 0 && directCouponRemoveControls().length === 0;
   }
 
   function classify(message, before, after, code, messageChanged) {
@@ -333,10 +420,12 @@
       const cleaned = await clearExistingCoupons();
       if (!cleaned) throw new Error('An existing coupon is applied and could not be removed safely. Remove it manually and retry.');
       const baseline = snapshotTotals();
+      const baselineCartItems = cartItemCount();
       const run = { host: location.hostname, url: location.href, startedAt: new Date().toISOString(), baseline, results: [], best: null, summary: '' };
 
       for (let i = 0; i < codes.length; i += 1) {
         if (abortRequested) { run.summary = `Stopped after ${run.results.length} code(s).`; break; }
+        if (baselineCartItems > 0 && cartItemCount() < baselineCartItems) throw new Error('Safety stop: cart item count changed during coupon testing.');
         const code = codes[i];
         notify(`Testing ${i + 1}/${codes.length}: ${code}`, run);
         const result = await applyOne(code, baseline);
