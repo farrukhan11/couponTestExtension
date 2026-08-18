@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "CouponTest",
-  "version": "0.5.0",
-  "description": "Test pasted coupon codes with fast apply-button detection and coupon-line response capture.",
+  "version": "0.6.0",
+  "description": "Test pasted coupon codes with Shopify discount-chip removal and best-code detection.",
   "permissions": ["activeTab", "storage"],
   "host_permissions": ["<all_urls>"],
   "action": {
@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["content-v5.js"],
+      "js": ["content-v6.js"],
       "run_at": "document_idle"
     }
   ]
