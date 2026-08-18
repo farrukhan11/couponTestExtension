@@ -10,10 +10,12 @@ function parseCodes(raw) {
   return [...new Set(raw.split(/[\n,;\t ]+/).map(v => v.trim()).filter(Boolean))];
 }
 function working(r) { return ['WORKING','WORKING_UNMEASURED'].includes(r.status); }
+function failed(r) { return ['INVALID','EXPIRED','MINIMUM_SPEND_NOT_MET','PRODUCT_NOT_ELIGIBLE','ALREADY_USED','NOT_STACKABLE','LOGIN_REQUIRED','APPLY_BUTTON_DISABLED','APPLY_CLICK_BLOCKED','RESET_REQUIRED'].includes(r.status); }
 function discountLabel(r) {
-  if (Number.isFinite(r.discountPercent) && r.discountPercent > 0) return `${r.discountPercent.toFixed(2)}%`;
-  if (Number.isFinite(r.discountAmount) && r.discountAmount > 0) return `${r.currencySymbol || ''}${r.discountAmount.toFixed(2)}`;
-  return '—';
+  const parts = [];
+  if (Number.isFinite(r.discountPercent) && r.discountPercent > 0) parts.push(`${r.discountPercent.toFixed(2)}%`);
+  if (Number.isFinite(r.discountAmount) && r.discountAmount > 0) parts.push(`${r.currencySymbol || ''}${r.discountAmount.toFixed(2)}`);
+  return parts.join(' · ') || '—';
 }
 function setRunning(on) {
   els.start.disabled = on; els.stop.disabled = !on; els.codes.disabled = on; els.reapplyBest.disabled = on; els.resetCoupon.disabled = on;
@@ -35,7 +37,7 @@ function render(run) {
     const code = document.createElement('td'); code.textContent = r.code;
     const status = document.createElement('td');
     const pill = document.createElement('span');
-    pill.className = `status-pill ${working(r) ? 'working' : ['INVALID','EXPIRED'].includes(r.status) ? 'failed' : 'other'}`;
+    pill.className = `status-pill ${working(r) ? 'working' : failed(r) ? 'failed' : 'other'}`;
     pill.textContent = r.status; status.appendChild(pill);
     if (r.message) { const note = document.createElement('div'); note.className='muted'; note.textContent=r.message.slice(0,120); status.appendChild(note); }
     const discount = document.createElement('td'); discount.textContent = discountLabel(r);
@@ -60,16 +62,36 @@ function resetPopupFields() {
 async function loadState() {
   const tab = await activeTab();
   if (tab?.url) { try { els.host.textContent = new URL(tab.url).hostname; } catch {} }
-  if (!tab?.id) return;
-  const data = await chrome.storage.local.get([`couponTest:${tab.id}`,'couponTest:last']);
+  if (!tab?.id) {
+    const fallback = await chrome.storage.local.get(['couponTest:last']);
+    if (fallback['couponTest:last']) { render(fallback['couponTest:last']); els.status.textContent = fallback['couponTest:last'].summary || 'Previous results loaded.'; }
+    return;
+  }
+  const data = await chrome.storage.local.get([`couponTest:${tab.id}`, 'couponTest:last']);
   const run = data[`couponTest:${tab.id}`] || data['couponTest:last'];
   if (run) { render(run); els.status.textContent = run.summary || 'Previous results loaded.'; }
 }
 chrome.runtime.onMessage.addListener((m) => {
   if (m?.type !== 'COUPON_TEST_PROGRESS') return;
   if (m.payload?.summary) els.status.textContent = m.payload.summary;
-  if (m.payload?.run) render(m.payload.run);
+  if (m.payload?.run) {
+    render(m.payload.run);
+    const tab = activeTab();
+    tab.then((t) => { if (t?.id) saveRun(t.id, m.payload.run).catch(() => {}); });
+  }
 });
+async function ensureEngine(tabId) {
+  try {
+    const info = await chrome.tabs.sendMessage(tabId, { type: 'GET_ENGINE_INFO' });
+    if (info?.ok && info.version === 7) return true;
+  } catch {}
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['content-v7.js'] });
+  await new Promise((r) => setTimeout(r, 250));
+  try {
+    const info = await chrome.tabs.sendMessage(tabId, { type: 'GET_ENGINE_INFO' });
+    return Boolean(info?.ok && info.version === 7);
+  } catch { return false; }
+}
 els.start.addEventListener('click', async () => {
   const codes = parseCodes(els.codes.value);
   if (!codes.length) return void (els.status.textContent='Paste at least one code.');
@@ -77,7 +99,11 @@ els.start.addEventListener('click', async () => {
   if (!tab?.id || !/^https?:/i.test(tab.url || '')) return void (els.status.textContent='Open a normal cart/checkout page first.');
   setRunning(true); els.status.textContent=`Testing ${codes.length} code(s)…`;
   try {
-    const res = await chrome.tabs.sendMessage(tab.id,{type:'START_COUPON_TESTS',payload:{codes,reapplyBest:els.reapplyBest.checked}});
+    if (!(await ensureEngine(tab.id))) throw new Error('Coupon engine could not be loaded on this tab. Refresh the store page and try again.');
+    const res = await Promise.race([
+      chrome.tabs.sendMessage(tab.id,{type:'START_COUPON_TESTS_V7',payload:{codes,reapplyBest:els.reapplyBest.checked}}),
+      new Promise((_,rej) => setTimeout(() => rej(new Error('Timed out — the store page may have reloaded during testing. Refresh the page and try again.')), 60000))
+    ]);
     if (!res?.ok) throw new Error(res?.error || 'Testing failed.');
     render(res.run); await saveRun(tab.id,res.run); els.status.textContent=res.run.summary || 'Testing complete.';
     els.runBadge.textContent='Done'; els.runBadge.className='badge done';

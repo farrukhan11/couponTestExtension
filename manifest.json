@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "CouponTest",
-  "version": "0.8.0",
-  "description": "Test pasted coupon codes with robust discount-chip handling and reset-required reporting.",
-  "permissions": ["activeTab", "storage"],
+  "version": "0.7.2",
+  "description": "Test pasted coupon codes with robust discount-chip handling, reset-required reporting, stale-response protection, and non-blocking removal.",
+  "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "CouponTest",
@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["content-v8.js"],
+      "js": ["content-v7.js"],
       "run_at": "document_idle"
     }
   ]
