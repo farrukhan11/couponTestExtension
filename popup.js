@@ -44,6 +44,19 @@ function render(run) {
 }
 async function activeTab() { return (await chrome.tabs.query({active:true,currentWindow:true}))[0]; }
 async function saveRun(tabId, run) { await chrome.storage.local.set({[`couponTest:${tabId}`]:run,'couponTest:last':run}); }
+async function clearStoredRun(tabId) {
+  const keys = ['couponTest:last'];
+  if (tabId) keys.push(`couponTest:${tabId}`);
+  await chrome.storage.local.remove(keys);
+}
+function resetPopupFields() {
+  els.codes.value = '';
+  els.reapplyBest.checked = true;
+  render(null);
+  els.runBadge.textContent = 'Ready';
+  els.runBadge.className = 'badge';
+  els.status.textContent = 'Extension fields reset. If a coupon is applied on the store page, remove it manually from the cart/checkout.';
+}
 async function loadState() {
   const tab = await activeTab();
   if (tab?.url) { try { els.host.textContent = new URL(tab.url).hostname; } catch {} }
@@ -74,23 +87,10 @@ els.start.addEventListener('click', async () => {
 els.stop.addEventListener('click', async () => { const tab=await activeTab(); if(tab?.id) chrome.tabs.sendMessage(tab.id,{type:'STOP_COUPON_TESTS'}).catch(()=>{}); els.status.textContent='Stopping after current action…'; });
 els.resetCoupon.addEventListener('click', async () => {
   const tab = await activeTab();
-  if (!tab?.id || !/^https?:/i.test(tab.url || '')) return void (els.status.textContent='Open the store cart/checkout page first.');
-  els.resetCoupon.disabled = true;
-  els.status.textContent = 'Trying to reset applied coupon…';
-  try {
-    const res = await chrome.tabs.sendMessage(tab.id, { type: 'RESET_APPLIED_COUPONS' });
-    els.status.textContent = res?.message || (res?.ok ? 'Applied coupon reset.' : 'Could not reset applied coupon.');
-    els.runBadge.textContent = res?.ok ? 'Reset' : 'Manual';
-    els.runBadge.className = res?.ok ? 'badge done' : 'badge error';
-  } catch (e) {
-    els.status.textContent = 'Reset helper not loaded yet. Reload extension and refresh the page.';
-    els.runBadge.textContent = 'Error';
-    els.runBadge.className = 'badge error';
-  } finally {
-    els.resetCoupon.disabled = false;
-  }
+  await clearStoredRun(tab?.id);
+  resetPopupFields();
 });
-els.clearResults.addEventListener('click', async () => { const tab=await activeTab(); if(tab?.id) await chrome.storage.local.remove(`couponTest:${tab.id}`); render(null); els.status.textContent='Results cleared.'; });
+els.clearResults.addEventListener('click', async () => { const tab=await activeTab(); if(tab?.id) await clearStoredRun(tab.id); render(null); els.status.textContent='Results cleared.'; });
 els.exportCsv.addEventListener('click', () => {
   const results=currentRun?.results || []; if(!results.length) return;
   const headers=['store','page','code','status','discount_percent','discount_amount','currency','baseline_subtotal','baseline_total','after_total','message','tested_at'];
