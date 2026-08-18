@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "CouponTest",
-  "version": "0.7.0",
-  "description": "Test pasted coupon codes with strict coupon-chip removal and safe UI-only reset.",
+  "version": "0.8.0",
+  "description": "Test pasted coupon codes with robust discount-chip handling and reset-required reporting.",
   "permissions": ["activeTab", "storage"],
   "host_permissions": ["<all_urls>"],
   "action": {
@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["content-v7.js"],
+      "js": ["content-v8.js"],
       "run_at": "document_idle"
     }
   ]
