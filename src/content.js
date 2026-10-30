@@ -42,11 +42,26 @@
     if (message.type !== 'START_COUPON_TESTS' && message.type !== 'START_COUPON_TESTS_V7') return;
     const codes = [...new Set(((message.payload && message.payload.codes) || []).map((v) => CT.dom.clean(v)).filter(Boolean))];
     const tabId = (message.payload && message.payload.tabId) || (message.tab && message.tab.id) || null;
+    // Acknowledge at once: a run takes minutes and the page may reload mid-way,
+    // which would close a long-lived reply channel. Progress and the final
+    // result travel through chrome.storage + COUPON_TEST_PROGRESS instead.
+    if (CT.engine.isRunning()) { sendResponse({ ok: false, error: 'Coupon testing is already running on this page.' }); return; }
     CT.engine.runTests(codes, Boolean(message.payload && message.payload.reapplyBest), tabId)
-      .then((run) => sendResponse({ ok: true, run }))
-      .catch((error) => sendResponse({ ok: false, error: (error && error.message) || String(error) }));
-    return true;
+      .catch((error) => reportFailure((error && error.message) || String(error), tabId));
+    sendResponse({ ok: true, started: true });
   });
+
+  function reportFailure(msg, tabId) {
+    const run = CT.engine.currentRun() || { host: location.hostname, url: location.href, startedAt: new Date().toISOString(), baseline: null, results: [], best: null };
+    run.running = false;
+    run.error = msg;
+    run.summary = msg;
+    run.finishedAt = run.finishedAt || new Date().toISOString();
+    const data = { 'couponTest:last': run };
+    if (tabId != null) data[`couponTest:${tabId}`] = run;
+    try { chrome.storage.local.set(data); } catch {}
+    try { chrome.runtime.sendMessage({ type: 'COUPON_TEST_PROGRESS', payload: { summary: msg, run } }).catch(() => {}); } catch {}
+  }
 
   try {
     window.__couponTestDebug = {

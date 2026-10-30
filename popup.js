@@ -109,6 +109,13 @@ async function activeTab() { return (await chrome.tabs.query({active:true,curren
 // every step (even while no popup is open), so polling storage lets a
 // reopened popup show the in-flight run and keep it updated until it ends.
 let pollTimer = null;
+let startClickedAt = 0;
+function finishRun(run) {
+  stopPolling(); clearWatchdog(); startClickedAt = 0;
+  setRunning(false);
+  els.runBadge.textContent = run?.error ? 'Error' : 'Done';
+  els.runBadge.className = run?.error ? 'badge error' : 'badge done';
+}
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 function beginPolling() {
   stopPolling();
@@ -123,15 +130,15 @@ function beginPolling() {
       // Prefer an in-flight run; otherwise the most recently started one.
       const run = candidates.find((r) => r.running)
         || candidates.sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')))[0];
+      // Just pressed Start: ignore the previous run still sitting in storage.
+      if (startClickedAt && !run.running && Date.parse(run.startedAt || 0) < startClickedAt) return;
       render(run);
       if (run.summary) els.status.textContent = run.summary;
       if (run.running) {
         setRunning(true);
         els.runBadge.textContent = 'Running'; els.runBadge.className = 'badge running';
       } else {
-        stopPolling();
-        setRunning(false);
-        els.runBadge.textContent = 'Done'; els.runBadge.className = 'badge done';
+        finishRun(run);
       }
     } catch {}
   }, 1000);
@@ -197,10 +204,7 @@ chrome.runtime.onMessage.addListener((m) => {
     render(m.payload.run);
     const tab = activeTab();
     tab.then((t) => { if (t?.id) saveRun(t.id, m.payload.run).catch(() => {}); });
-    if (m.payload.run.running === false && pollTimer) {
-      stopPolling(); setRunning(false);
-      els.runBadge.textContent = 'Done'; els.runBadge.className = 'badge done';
-    }
+    if (m.payload.run.running === false && pollTimer) finishRun(m.payload.run);
   }
 });
 const ENGINE_FILES = ['src/dom.js', 'src/totals.js', 'src/detect.js', 'src/response.js', 'src/engine.js', 'src/content.js'];
@@ -232,15 +236,17 @@ els.start.addEventListener('click', async () => {
   if (!codes.length) return void (els.status.textContent='Paste at least one code.');
   const tab = await activeTab();
   if (!tab?.id || !/^https?:/i.test(tab.url || '')) return void (els.status.textContent='Open a normal cart/checkout page first.');
+  startClickedAt = Date.now() - 2000;
   setRunning(true); els.status.textContent=`Testing ${codes.length} code(s)…`; armWatchdog(); beginPolling();
   try {
     if (!(await ensureEngine(tab.id))) throw new Error('Coupon engine could not be loaded on this tab. Refresh the store page and try again.');
+    // The page acknowledges immediately; progress/results arrive via storage polling.
     const res = await chrome.tabs.sendMessage(tab.id,{type:'START_COUPON_TESTS',payload:{codes,reapplyBest:els.reapplyBest.checked,tabId:tab.id}},{frameId:engineFrame});
-    if (!res?.ok) throw new Error(res?.error || 'Testing failed.');
-    render(res.run); await saveRun(tab.id,res.run); els.status.textContent=res.run.summary || 'Testing complete.';
-    els.runBadge.textContent='Done'; els.runBadge.className='badge done';
-  } catch (e) { els.status.textContent=e.message || String(e); els.runBadge.textContent='Error'; els.runBadge.className='badge error'; }
-  finally { clearWatchdog(); stopPolling(); setRunning(false); }
+    if (!res?.ok) throw new Error(res?.error || 'Testing failed to start.');
+  } catch (e) {
+    stopPolling(); clearWatchdog(); startClickedAt = 0; setRunning(false);
+    els.status.textContent=e.message || String(e); els.runBadge.textContent='Error'; els.runBadge.className='badge error';
+  }
 });
 els.stop.addEventListener('click', async () => { const tab=await activeTab(); if(tab?.id) chrome.tabs.sendMessage(tab.id,{type:'STOP_COUPON_TESTS'},{frameId:engineFrame}).catch(()=>{}); els.status.textContent='Stopping after current action…'; });
 els.resetCoupon.addEventListener('click', async () => {
