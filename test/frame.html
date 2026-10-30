@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CouponTest Fixture Frame</title>
+  <script>
+    window.COUPON_FIXTURE = { CODES: { SAVE10: 10, WELCOME20: 20, SUMMER15: 15 }, EXPIRED: { OLD5: 5 } };
+  </script>
+  <script src="checkout.js"></script>
+</head>
+<body>
+  <div id="frameHost"></div>
+  <script>
+    checkoutTemplate(document.getElementById('frameHost'));
+    wireCheckout(document.getElementById('frameHost'));
+  </script>
+</body>
+</html>

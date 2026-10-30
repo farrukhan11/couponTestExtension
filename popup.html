@@ -20,7 +20,7 @@
     <section class="panel">
       <label for="codes">Coupon codes</label>
       <textarea id="codes" rows="7" placeholder="SAVE10\nWELCOME20\nSUMMER15"></textarea>
-      <p class="hint">Paste one per line, or separate with commas/spaces.</p>
+      <p class="hint">Paste one code per line (spaces inside a code are kept as-is). Commas or semicolons can separate multiple codes on the same line.</p>
 
       <label class="check-row">
         <input id="reapplyBest" type="checkbox" checked />
@@ -35,6 +35,7 @@
     </section>
 
     <section class="summary-grid">
+      <div><span>Original</span><strong id="originalValue">—</strong></div>
       <div><span>Tested</span><strong id="testedCount">0</strong></div>
       <div><span>Working</span><strong id="workingCount">0</strong></div>
       <div><span>Best</span><strong id="bestValue">—</strong></div>

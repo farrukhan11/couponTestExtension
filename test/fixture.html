@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CouponTest Fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #f4f6f8; color: #18202a; }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 24px; display: grid; grid-template-columns: 1fr 360px; gap: 24px; }
+    .card { background: #fff; border: 1px solid #e4e7ec; border-radius: 12px; padding: 18px; }
+    h1 { font-size: 18px; margin: 0 0 14px; }
+    h2 { font-size: 12px; margin: 0 0 6px; color: #475467; text-transform: uppercase; letter-spacing: .04em; }
+    .variant { border-top: 1px solid #eef0f3; padding: 12px 0; }
+    .variant:first-of-type { border-top: 0; padding-top: 0; }
+    iframe { width: 100%; height: 260px; border: 1px solid #e4e7ec; border-radius: 12px; background: #fff; }
+    .note { font-size: 12px; color: #667085; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div>
+      <div class="card">
+        <h1>Collapsible / localized coupon sections</h1>
+        <div class="variant"><h2>Plain</h2><div id="lightHost"></div></div>
+        <div class="variant"><h2>Button toggle (collapses on blur)</h2><div id="toggleHost"></div></div>
+        <div class="variant"><h2>aria-expanded accordion</h2><div id="accordionHost"></div></div>
+        <div class="variant"><h2>&lt;details&gt;/&lt;summary&gt;</h2><div id="detailsHost"></div></div>
+        <div class="variant"><h2>Field replaced by applied chip</h2><div id="chipHost"></div></div>
+        <div class="variant"><h2>Italian, collapsed (Applica)</h2><div id="itHost"></div></div>
+        <p class="note">Each section starts collapsed; the extension must open it, fill, press Apply, record, then continue.</p>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h1>Shadow DOM (new-Shopify style)</h1>
+        <div id="shadowHost"></div>
+        <p class="note">Coupon form + totals live inside an open shadow root.</p>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h1>Iframe checkout</h1>
+        <iframe src="frame.html" title="checkout frame"></iframe>
+      </div>
+    </div>
+    <div class="card">
+      <h1>Notes</h1>
+      <p class="note">Use codes: SAVE10 (10%), WELCOME20 (20%), SUMMER15 (15%), OLD5 (expired), NOTELIGIBLE (ineligible), anything else is invalid.</p>
+      <p class="note">Original total is $200.00; a working discount should be measured against it.</p>
+    </div>
+  </div>
+
+  <script>
+    window.COUPON_FIXTURE = { CODES: { SAVE10: 10, WELCOME20: 20, SUMMER15: 15 }, EXPIRED: { OLD5: 5 } };
+  </script>
+  <script src="checkout.js"></script>
+  <script>
+    checkoutTemplate(document.getElementById('lightHost'), { mode: 'plain' });
+    wireCheckout(document.getElementById('lightHost'));
+
+    const shadow = document.getElementById('shadowHost').attachShadow({ mode: 'open' });
+    checkoutTemplate(shadow, { mode: 'plain', shadow: true });
+    wireCheckout(shadow);
+
+    checkoutTemplate(document.getElementById('toggleHost'), { mode: 'toggle', collapseOnBlur: true });
+    wireCheckout(document.getElementById('toggleHost'));
+
+    checkoutTemplate(document.getElementById('accordionHost'), { mode: 'accordion', collapseOnBlur: true });
+    wireCheckout(document.getElementById('accordionHost'));
+
+    checkoutTemplate(document.getElementById('detailsHost'), { mode: 'details' });
+    wireCheckout(document.getElementById('detailsHost'));
+
+    checkoutTemplate(document.getElementById('chipHost'), { mode: 'chipReplace' });
+    wireCheckout(document.getElementById('chipHost'));
+
+    checkoutTemplate(document.getElementById('itHost'), { mode: 'toggle', lang: 'it', collapseOnBlur: true });
+    wireCheckout(document.getElementById('itHost'));
+  </script>
+</body>
+</html>
