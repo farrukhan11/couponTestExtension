@@ -9,6 +9,59 @@
   // Fields that are definitely NOT the coupon box (multilingual).
   const BAD = /email|e-?mail|phone|telefono|postal|\bzip\b|citt[aà]|provincia|indirizzo|address|cerca|\bsearch\b|quantity|quantit[aà]|first\s*name|last\s*name|\bnome\b|\bcognome\b|\bcity\b|\bstate\b|country|paese|password|newsletter|subscribe|filtro|\bfilter\b|percentuale|discount\s*percent|\bnome\s+sulla\s+carta\b/i;
 
+  // Payment / identity fields. Never a coupon box, whatever else the page says
+  // near them ("gift card" is stripped first so gift-card coupon boxes survive).
+  const PAYMENT = /\bcards?\b|cc-|\bcc\b|cvv|cvc|csc|cvn|security\s*code|verification|expir|exp[\s._-]*(?:date|month|year|mm|yy)|\bmm\s*\/?\s*yy|iban|swift|routing|account\s*(?:number|no)|sort\s*code|cardholder|holder|carta|scadenza|tarjeta|vencimiento|karte|kartennummer|prüfnummer|carte|cryptogramme|cart[aã]o|validade|\bssn\b|\bvat\b|tax\s*id|\bpin\b|one-time|otp/i;
+  // autocomplete tokens that identify personal / payment data.
+  const BAD_AUTOCOMPLETE = /^(?:cc-|name|given-name|additional-name|family-name|honorific|nickname|username|new-password|current-password|one-time-code|organization|street-address|address-|postal-code|country|tel|email|bday|sex|transaction|url|photo)/i;
+  const NON_TEXT_TYPES = /^(?:checkbox|radio|password|email|tel|number|date|datetime-local|month|week|time|file|range|color|image|button|submit|reset|search)$/i;
+
+  function labelText(el) {
+    const bits = [];
+    try {
+      if (el.labels) for (const l of el.labels) bits.push(l.textContent);
+    } catch {}
+    try {
+      const ids = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
+      const root = el.getRootNode && el.getRootNode();
+      for (const id of ids) {
+        const n = root && root.getElementById ? root.getElementById(id) : document.getElementById(id);
+        if (n) bits.push(n.textContent);
+      }
+    } catch {}
+    try { const l = el.closest && el.closest('label'); if (l) bits.push(l.textContent); } catch {}
+    // Floating-label designs: label is a sibling right before the input.
+    try {
+      let s = el.previousElementSibling;
+      if (s && /^(?:label|span|div)$/i.test(s.tagName) && !s.querySelector('input,textarea,button')) bits.push(s.textContent);
+    } catch {}
+    return clean(bits.join(' ')).slice(0, 160);
+  }
+  function describe(el) {
+    const attrs = `${attrText(el)} ${clean(el.placeholder || '')}`.trim();
+    return { attrs, label: labelText(el), all: `${attrs} ${labelText(el)}`.trim() };
+  }
+  const withoutGiftCard = (s) => s.replace(/gift\s*-?\s*cards?|carte\s+cadeau|tarjeta\s+de\s+regalo|carta\s+regalo/gi, ' giftcoupon ');
+  // Hard exclusion: wrong input kind, or text/autocomplete says it is personal/payment data.
+  function isExcluded(el, d) {
+    const type = (el.getAttribute && el.getAttribute('type')) || '';
+    if (el.tagName === 'INPUT' && NON_TEXT_TYPES.test(type)) return true;
+    if (el.disabled || el.readOnly) return true;
+    const ac = (el.getAttribute && el.getAttribute('autocomplete')) || '';
+    if (ac && ac.split(/\s+/).some((tok) => BAD_AUTOCOMPLETE.test(tok))) return true;
+    const own = withoutGiftCard(d.all);
+    if (PAYMENT.test(own) || BAD.test(own)) return true;
+    return false;
+  }
+  function isPaymentContext(el) {
+    let p = el.parentElement;
+    for (let i = 0; i < 4 && p; i += 1, p = p.parentElement) {
+      const attrs = `${p.id || ''} ${typeof p.className === 'string' ? p.className : ''} ${p.getAttribute('data-testid') || ''} ${p.getAttribute('aria-label') || ''}`;
+      if (/payment|credit|card-?(?:number|form|field|details)|cvv|billing|stripe|braintree|adyen|checkout-?com/i.test(withoutGiftCard(attrs)) && !RE.coupon.test(attrs)) return true;
+    }
+    return false;
+  }
+
   // ---- dialog scoping -----------------------------------------------------
   function contextText(el) {
     let out = '';
@@ -55,35 +108,61 @@
     }
     return input.parentElement || null;
   }
+  function visibleInputCount(scope) {
+    let n = 0;
+    try {
+      for (const i of scope.querySelectorAll('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),textarea,select')) if (visible(i)) n += 1;
+    } catch {}
+    return n;
+  }
+  // The Apply button must sit in the coupon's own row (a row with a single
+  // input) — never the form-wide "Submit"/"Confirm" button of a card form.
   function nearApplyButton(el) {
-    const scope = (el.closest && el.closest('form')) || smallestRow(el);
-    if (!scope) return null;
-    for (const b of qAll('button,[role="button"],input[type="submit"],input[type="button"]', scope)) {
-      if (!visible(b)) continue;
-      if (RE.apply.test(text(b) || b.value || '')) return b;
+    const row = smallestRow(el);
+    if (!row || visibleInputCount(row) > 1) return null;
+    for (const b of qAll('button,[role="button"],input[type="submit"],input[type="button"]', row)) {
+      if (!visible(b) || CT.dom.isDanger(b)) continue;
+      const t = text(b) || b.value || '';
+      if (PAYMENT.test(withoutGiftCard(t))) continue;
+      if (RE.apply.test(t)) return b;
     }
     return null;
   }
   function scoreField(el) {
-    const own = `${attrText(el)} ${clean(el.placeholder || '')}`.trim();
-    const ctx = contextText(el);
+    const d = describe(el);
+    if (isExcluded(el, d)) return -100;
+    const own = withoutGiftCard(d.all);
+    const ownCoupon = RE.coupon.test(own);
+    const generic = /code|codice|c[oó]digo|kode|kortingscode|promocode/i.test(own);
+    const ctxCoupon = RE.coupon.test(contextText(el));
+    const apply = nearApplyButton(el);
     let score = 0;
-    if (RE.coupon.test(own)) score += 20;
-    else if (/\bcode\b|codice|c[oó]digo|kode\b|kortingscode|promocode/i.test(own)) score += 6;
-    if (RE.coupon.test(ctx)) score += 5;
-    if (el.getAttribute && el.getAttribute('type') === 'search') score -= 30;
-    if (BAD.test(own)) score -= 30;
+    if (ownCoupon) score += 20;
+    else if (generic) score += 6;
+    if (ctxCoupon) score += 5;
+    if (apply) score += 10;
+    // Without coupon wording on the field itself, require corroboration:
+    // a generic "code"/unlabelled field only counts with an Apply button in its row.
+    if (!ownCoupon && !apply) score -= 20;
+    if (!ownCoupon && isPaymentContext(el)) score -= 20;
     if (el.name && /^(s|q|search|query|keyword|filter)$/i.test(el.name)) score -= 30;
     if (deepClosest(el, 'nav,[role="navigation"],aside,header')) score -= 20;
-    if (nearApplyButton(el)) score += 10;
     return score;
   }
+  const STRONG = 20;
   function findField(opts = {}) {
-    const list = scopedQAll('input:not([type="hidden"]),textarea')
+    const all = scopedQAll('input:not([type="hidden"]),textarea')
       .map((el) => ({ el, score: scoreField(el), vis: visible(el) }))
-      .filter((x) => x.score >= 8 && (opts.includeHidden || x.vis))
-      .sort((a, b) => (b.vis ? 1 : 0) - (a.vis ? 1 : 0) || b.score - a.score);
-    return list[0] ? list[0].el : null;
+      .filter((x) => x.score >= 8);
+    const vis = all.filter((x) => x.vis).sort((a, b) => b.score - a.score);
+    const hid = all.filter((x) => !x.vis).sort((a, b) => b.score - a.score);
+    if (opts.includeHidden) return (vis[0] || hid[0] || {}).el || null;
+    if (!vis.length) return null;
+    // A confident coupon field exists but is collapsed: a merely plausible
+    // visible field is more likely a look-alike (card/ID box) — report "not
+    // found" so openSection() expands the real one instead.
+    if (hid.length && hid[0].score >= STRONG && vis[0].score < STRONG) return null;
+    return vis[0].el;
   }
   function fieldDescriptor(el) {
     if (!el) return '';
@@ -204,6 +283,11 @@
       if (!visible(el)) continue;
       if (CT.dom.isDanger(el) || CT.dom.isCartRemove(el) || isNavigation(el)) continue;
       const t = `${text(el)} ${(el.value || '')}`.trim();
+      if (PAYMENT.test(withoutGiftCard(t))) continue;
+      // A button owned by a different form (e.g. the card form) is not ours.
+      const ef = el.form || (el.closest && el.closest('form'));
+      const inf = input.form || (input.closest && input.closest('form'));
+      if (ef && inf && ef !== inf) continue;
       let score = 0;
       if (RE.apply.test(t)) score += 12;
       if (RE.coupon.test(t)) score += 4;
@@ -213,7 +297,7 @@
       if (!t) score -= 4;
       if (score > bestScore) { bestScore = score; best = el; }
     }
-    return bestScore >= (strict ? 6 : 12) ? best : null;
+    return bestScore >= (strict ? 6 : 16) ? best : null;
   }
   function findApply(input) {
     if (!input) return null;

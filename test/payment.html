@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- Regression: card / identity fields must never be mistaken for the coupon box.
+     Open payment.html#a|b|c|d ; result is written to <pre id="out"> (JSON). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CouponTest payment fixture</title>
+  <style>input,button{padding:8px;margin:4px}</style>
+</head>
+<body>
+  <div id="host"></div>
+  <pre id="out">pending</pre>
+  <script>window.chrome = { runtime: { sendMessage: () => Promise.resolve(), onMessage: { addListener() {} } }, storage: { local: { set() {} } } };</script>
+  <script src="../src/dom.js"></script>
+  <script src="../src/totals.js"></script>
+  <script src="../src/detect.js"></script>
+  <script>
+    const CARD = `
+      <section class="payment-step">
+        <h3>Payment — pay with credit card, or use a gift card or discount code</h3>
+        <form id="cardform">
+          <input name="cardnumber" placeholder="Card number" autocomplete="cc-number" />
+          <input name="cardname" placeholder="Name on card" autocomplete="cc-name" />
+          <input name="exp" placeholder="MM / YY" autocomplete="cc-exp" />
+          <input name="cvv" placeholder="Security code" />
+          <input name="zip" placeholder="Postal code" />
+          <button type="submit">Confirm</button>
+        </form>
+      </section>`;
+    const VARIANTS = {
+      // coupon behind a toggle button; only card fields visible at start
+      a: CARD + `<button type="button" id="t" aria-expanded="false" onclick="document.getElementById('p').hidden=false">Have a coupon code?</button>
+                 <div id="p" hidden><div class="r"><input name="discount_code" placeholder="Discount code" /><button type="button">Apply</button></div></div>`,
+      // coupon visible, card form BEFORE it in DOM order
+      b: CARD + `<div class="r"><input name="discount_code" placeholder="Discount code" /><button type="button">Apply</button></div>`,
+      // coupon input has no attributes at all, only a <label> and a row Apply button
+      c: CARD + `<div class="r"><label for="x">Promo</label><input id="x" /><button type="button">Apply</button></div>`,
+      // coupon only inside collapsed <details>, card form visible
+      d: CARD + `<details><summary>Add promo code</summary><div class="r"><input name="q1" placeholder="Enter code" /><button type="button">Apply</button></div></details>`,
+      // no coupon anywhere: must report NOT FOUND (never a card field)
+      e: CARD,
+      // gift-card coupon box is still a valid coupon box
+      f: CARD + `<div class="r"><input name="gc" placeholder="Gift card or discount code" /><button type="button">Apply</button></div>`
+    };
+    const v = (location.hash || '#a').slice(1);
+    document.getElementById('host').innerHTML = VARIANTS[v];
+    (async () => {
+      await new Promise((r) => setTimeout(r, 300));
+      const opened = await CT.detect.openSection();
+      const f = CT.detect.findField();
+      const apply = f ? CT.detect.findApply(f) : null;
+      document.getElementById('out').textContent = JSON.stringify({ variant: v, opened, field: f ? (f.name || f.id) : null, apply: apply ? apply.textContent : null });
+    })();
+  </script>
+</body>
+</html>
